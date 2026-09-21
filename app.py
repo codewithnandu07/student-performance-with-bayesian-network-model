@@ -1,71 +1,60 @@
 import streamlit as st
-import pandas as pd
-from pgmpy.models import BayesianNetwork
-from pgmpy.estimators import MaximumLikelihoodEstimator
-from pgmpy.inference import VariableElimination
+from collections import Counter, defaultdict
 
-st.set_page_config(page_title="Student Performance Predictor", page_icon="🎓")
+st.set_page_config(page_title="Student Performance Predictor")
 st.title("🎓 Student Performance Prediction")
-st.subheader("Using Bayesian Network Model")
+st.write("Bayesian Network Model - Pure Python")
 
 # --- DATASET ---
-# Replace this with pd.read_csv("your_data.csv")
-data = pd.DataFrame({
-    'Study_Hours': ['Low', 'Medium', 'High', 'High', 'Medium', 'Low', 'High', 'Medium', 'High', 'Low'],
-    'Attendance': ['Low', 'High', 'High', 'Medium', 'Low', 'High', 'High', 'High', 'Low', 'Medium'],
-    'Assignment': ['Low', 'Medium', 'High', 'High', 'Low', 'Medium', 'High', 'Medium', 'High', 'Low'],
-    'Previous_Grade': ['Low', 'Medium', 'High', 'High', 'Medium', 'Low', 'High', 'Medium', 'High', 'Low'],
-    'Performance': ['Fail', 'Pass', 'Excellent', 'Good', 'Fail', 'Pass', 'Excellent', 'Good', 'Good', 'Fail']
-})
+dataset = [
+    ("High", "High", "High", "High", "Excellent"),
+    ("High", "High", "Medium", "High", "Good"),
+    ("Medium", "High", "High", "Medium", "Good"),
+    ("Medium", "Medium", "Medium", "Medium", "Pass"),
+    ("Low", "High", "Medium", "Medium", "Pass"),
+    ("Low", "Low", "Low", "Low", "Fail"),
+    ("Low", "Medium", "Low", "Low", "Fail"),
+    ("High", "Medium", "High", "High", "Excellent"),
+    ("Medium", "Low", "Medium", "Low", "Fail"),
+    ("High", "High", "High", "Medium", "Excellent"),
+]
 
-@st.cache_resource
-def train_model():
-    model = BayesianNetwork([
-        ('Study_Hours', 'Performance'),
-        ('Attendance', 'Performance'),
-        ('Assignment', 'Performance'),
-        ('Previous_Grade', 'Performance')
-    ])
-    model.fit(data, estimator=MaximumLikelihoodEstimator)
-    return model
+# Train
+prior = Counter([r[4] for r in dataset])
+total = len(dataset)
+prior_prob = {k: v/total for k,v in prior.items()}
+likelihood = defaultdict(lambda: defaultdict(Counter))
+for s,a,ass,g,p in dataset:
+    likelihood['Study'][p][s]+=1
+    likelihood['Att'][p][a]+=1
+    likelihood['Assign'][p][ass]+=1
+    likelihood['Grade'][p][g]+=1
 
-model = train_model()
-infer = VariableElimination(model)
+def predict(study, att, assign, grade):
+    scores = {}
+    for perf in prior:
+        p = prior_prob[perf]
+        p *= (likelihood['Study'][perf][study] + 1) / (prior[perf] + 3)
+        p *= (likelihood['Att'][perf][att] + 1) / (prior[perf] + 3)
+        p *= (likelihood['Assign'][perf][assign] + 1) / (prior[perf] + 3)
+        p *= (likelihood['Grade'][perf][grade] + 1) / (prior[perf] + 3)
+        scores[perf] = p
+    s = sum(scores.values())
+    for k in scores: scores[k]/=s
+    best = max(scores, key=scores.get)
+    return best, scores
 
-# --- WEBSITE UI ---
-col1, col2 = st.columns(2)
-with col1:
-    study = st.selectbox("Study Hours Per Day", ["Low (<2h)", "Medium (2-4h)", "High (>4h)"])
-    study_val = study.split()[0]
-    attendance = st.selectbox("Attendance %", ["Low (<60%)", "Medium (60-80%)", "High (>80%)"])
-    att_val = attendance.split()[0]
+# --- UI ---
+c1,c2 = st.columns(2)
+with c1:
+    study = st.selectbox("Study Hours", ["Low","Medium","High"])
+    att = st.selectbox("Attendance", ["Low","Medium","High"])
+with c2:
+    assign = st.selectbox("Assignment", ["Low","Medium","High"])
+    grade = st.selectbox("Previous Grade", ["Low","Medium","High"])
 
-with col2:
-    assignment = st.selectbox("Assignment Completion", ["Low", "Medium", "High"])
-    grade = st.selectbox("Previous Grade", ["Low", "Medium", "High"])
-
-if st.button("Predict Performance", type="primary"):
-    evidence = {
-        'Study_Hours': study_val,
-        'Attendance': att_val,
-        'Assignment': assignment,
-        'Previous_Grade': grade
-    }
-    result = infer.query(variables=['Performance'], evidence=evidence)
-
-    # Get probabilities
-    states = result.state_names['Performance']
-    probs = result.values
-
-    best_idx = probs.argmax()
-    best_state = states[best_idx]
-    confidence = probs[best_idx] * 100
-
-    st.success(f"**Predicted Result: {best_state}** ({confidence:.1f}% confidence)")
-
-    st.write("Full Probability Distribution:")
-    prob_df = pd.DataFrame({"Performance": states, "Probability": probs})
-    st.bar_chart(prob_df.set_index("Performance"))
-
-st.divider()
-st.caption("Model: Bayesian Network | P(Performance | Study, Attendance, Assignment, Grade)")
+if st.button("Predict", type="primary"):
+    best, probs = predict(study, att, assign, grade)
+    st.success(f"Prediction: **{best}**")
+    st.write(probs)
+    st.bar_chart(probs)
